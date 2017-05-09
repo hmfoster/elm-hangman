@@ -2,11 +2,16 @@ module Main exposing (..)
 
 import Html exposing (..)
 import Html.Events exposing (onClick)
+import Http exposing (..)
 import Char
 import List
 import String
+import Array exposing (..)
+import Random
+import Maybe exposing (..)
 
 
+main : Program Never Model Msg
 main =
     Html.program
         { init = init
@@ -32,7 +37,8 @@ type alias LetterVisibility =
 
 type alias Model =
     { lettersAvailable : List String
-    , word : List LetterVisibility
+    , word : String
+    , splitWord : List LetterVisibility
     , numGuessesLeft : Int
     , gameResult : GameResult
     , numLettersToWin : Int
@@ -48,22 +54,28 @@ letters =
             )
 
 
+words : Array String
+words =
+    Array.fromList [ "elephant", "acrobat", "caterpiller", "pillow", "charm" ]
+
+
 initWord : String -> List LetterVisibility
 initWord word =
     String.split "" word |> List.map (\l -> ( l, False ))
 
 
-word : List LetterVisibility
-word =
-    initWord "book"
+wordIndex : Random.Generator
+wordIndex =
+    Random.generate NewWord (Random.int 0 4)
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model letters word 10 Incomplete (List.length word), Cmd.none )
+    ( Model letters "guess" (initWord "guess") 10 Incomplete (String.length "guess"), Cmd.none )
 
 
 
+-- newGame
 -- as letters are chosen, use filter to remove
 -- Update
 
@@ -71,57 +83,106 @@ init =
 type Msg
     = Guess String
     | NewGame
+    | NewWord
+
+
+
+-- | NextWord (Result Http.Error String)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Guess letter ->
-            let
-                newLetters =
-                    List.filter (\l -> l /= letter) model.lettersAvailable
+            case model.gameResult of
+                Incomplete ->
+                    ( guess letter model, Cmd.none )
 
-                visibleLetters =
-                    List.map
-                        (\( l, vis ) ->
-                            if l == letter then
-                                ( l, True )
-                            else
-                                ( l, vis )
-                        )
-                        model.word
+                Win ->
+                    ( model, Cmd.none )
 
-                numLettersFound =
-                    List.filter
-                        (\( l, vis ) -> letter == l)
-                        model.word
-                        |> List.length
-
-                numLettersToWin =
-                    model.numLettersToWin - numLettersFound
-
-                turnsLeft =
-                    model.numGuessesLeft - 1
-
-                gameResult =
-                    if numLettersToWin == 0 then
-                        Win
-                    else if turnsLeft == 0 then
-                        Lose
-                    else
-                        Incomplete
-            in
-                ( Model
-                    newLetters
-                    visibleLetters
-                    turnsLeft
-                    gameResult
-                    numLettersToWin
-                , Cmd.none
-                )
+                Lose ->
+                    ( model, Cmd.none )
 
         NewGame ->
             init
+
+        NewWord ->
+            init
+
+
+
+--         NextWord (Ok newWord) ->
+--             ( Model letters newWord (initWord newWord) 10 Incomplete (String.length newWord), Cmd.none )
+--
+--         NextWord (Err _) ->
+--             ( model, Cmd.none )
+--
+--
+-- getNewWord : Cmd Msg
+-- getNewWord =
+--     let
+--         url =
+--             "http://randomword.setgetgo.com/get.php"
+--
+--         request =
+--             Http.getString url
+--     in
+--         Http.send NextWord request
+
+
+guess : String -> Model -> Model
+guess letter model =
+    let
+        newLetters =
+            filterOutLetter letter model.lettersAvailable
+
+        letterVisibility =
+            setLetterVisible letter model.splitWord
+
+        numLettersToWin =
+            countLettersLeft letterVisibility
+
+        turnsLeft =
+            model.numGuessesLeft - 1
+
+        gameResult =
+            if numLettersToWin == 0 then
+                Win
+            else if turnsLeft <= 0 then
+                Lose
+            else
+                Incomplete
+    in
+        Model
+            newLetters
+            "next"
+            letterVisibility
+            turnsLeft
+            gameResult
+            numLettersToWin
+
+
+filterOutLetter : a -> List a -> List a
+filterOutLetter letter list =
+    List.filter (\l -> l /= letter) list
+
+
+setLetterVisible : String -> List LetterVisibility -> List LetterVisibility
+setLetterVisible letter list =
+    List.map
+        (\( l, vis ) ->
+            if l == letter then
+                ( l, True )
+            else
+                ( l, vis )
+        )
+        list
+
+
+countLettersLeft : List LetterVisibility -> Int
+countLettersLeft word =
+    List.filter (\( l, v ) -> not v) word |> List.length
 
 
 
@@ -141,7 +202,7 @@ view : Model -> Html Msg
 view model =
     div []
         [ gameProgress model
-        , wordView model.word
+        , wordView model.splitWord
         , lettersView model.lettersAvailable
         , button [ onClick NewGame ] [ text "New Game!" ]
         ]
@@ -156,7 +217,11 @@ gameProgress model =
                     ( "Well done, you win!", "" )
 
                 Lose ->
-                    ( "Womp womp womp, you lose", "" )
+                    ( "Womp womp womp, you lose. The word was \""
+                        ++ model.word
+                        ++ "\""
+                    , ""
+                    )
 
                 Incomplete ->
                     ( "", (toString model.numGuessesLeft) ++ " guesses left!" )
